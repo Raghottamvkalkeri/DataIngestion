@@ -1,175 +1,208 @@
-# 📰 News Data Ingestion Script - README
 
-This project automates the process of fetching news articles from the [NewsAPI](https://newsapi.org/) and saving them to a CSV file and a SQLite database using a Python script. It runs hourly using macOS's `cron`.
+# 📰 News Data Ingestion Script
+
+This project fetches the latest **technology news** every hour using the **NewsAPI**, and saves it in three different formats: CSV, SQLite (a mini database), and JSON. It uses Python and runs automatically in the background using a **cron job** (like a scheduled task).
 
 ---
 
-## 📁 Folder Structure
+## 📜 What this project does — Luman Speak
+
+This script is like a virtual assistant that:
+
+1. **Grabs latest tech news** online (from NewsAPI)
+2. **Cleans up the information** so it’s easy to work with
+3. **Saves the news in 3 formats**:
+   - Excel-like file (CSV)
+   - Database file (SQLite)
+   - Archive file (JSON)
+4. **Skips any duplicates**
+5. **Runs every hour**, without needing your help
+
+---
+
+## 🧠 Full Python Code (Ingests Tech News)
+
+```python
+import requests
+import pandas as pd
+import sqlite3
+from datetime import datetime
+import os
+import json
+
+# Load API Key
+def load_api_key(path='api_keys.txt'):
+    with open(path, 'r') as f:
+        for line in f:
+            if 'NEWS_API_KEY' in line:
+                return line.strip().split('=')[1]
+
+api_key = "4329bed58eed43438a4d6ebeaad4e4f3"  # Or use: load_api_key()
+category = "technology"
+country = "us"
+
+# Fetch Articles from News API
+url = f"https://newsapi.org/v2/top-headlines?country={country}&category={category}&apiKey={api_key}"
+response = requests.get(url)
+articles = response.json().get("articles", [])
+
+# Flatten 'source' field
+for article in articles:
+    if isinstance(article.get('source'), dict):
+        article['source'] = article['source'].get('name', '')
+        article['category'] = category
+        article['country'] = country
+
+# Convert to DataFrame
+df = pd.DataFrame(articles)
+
+# Save to CSV
+now = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+csv_file = f"/Applications/XAMPP/xamppfiles/htdocs/news/batch_output/{category}_{country}_{now}.csv"
+df.to_csv(csv_file, index=False)
+print(f"✅ CSV saved: {csv_file}")
+
+# Save to SQLite
+conn = sqlite3.connect('tech_news.db')
+cursor = conn.cursor()
+cursor.execute("SELECT url FROM batch_news")
+existing_urls = set(row[0] for row in cursor.fetchall())
+df_filtered = df[~df['url'].isin(existing_urls)]
+df_filtered.to_sql('batch_news', conn, if_exists='append', index=False)
+conn.close()
+print("✅ Saved to SQLite: tech_news.db")
+
+# Save to JSON (append only new articles)
+json_file = f"/Applications/XAMPP/xamppfiles/htdocs/news/batch_output/output.json"
+if os.path.exists(json_file) and os.path.getsize(json_file) > 0:
+    with open(json_file, "r") as f:
+        existing_data = json.load(f)
+else:
+    existing_data = []
+
+existing_urls = {article["url"] for article in existing_data if "url" in article}
+new_articles = [a for a in articles if "url" in a and a["url"] not in existing_urls]
+existing_data.extend(new_articles)
+
+with open(json_file, "w") as f:
+    json.dump(existing_data, f, indent=4)
+
+print(f"✅ JSON updated: {json_file}")
+```
+
+---
+
+## 📁 Project Structure
 
 ```
 news/
-├── batch_ingest.py
-├── api_keys.txt
-├── batch_output/
-│   └── tech_news_YYYY-MM-DD_HH-MM-SS.csv
-└── logfile.log
+├── batch_ingest.py       # This script fetches and saves the news
+├── api_keys.txt          # File with your News API key (optional)
+├── batch_output/         # Folder where CSV and JSON are saved
+├── tech_news.db          # SQLite database file
+├── logfile.log           # Logs every run from cron
+└── README.md             # You’re reading this!
 ```
 
 ---
 
-## ⚙️ Prerequisites
+## ⚙️ Setup Steps
 
 ### 1. Install Python Packages
-
-Make sure you're using Python 3 (macOS default is fine). Then install dependencies:
 
 ```bash
 python3 -m pip install pandas requests --break-system-packages
 ```
 
-You may also need:
-```bash
-python3 -m pip install sqlite3
-```
+### 2. Add Your API Key
 
-> If you see `externally-managed-environment`, add `--break-system-packages`.
-
----
-
-### 2. Set Up API Key
-
-Create a file `api_keys.txt` in the same directory:
+Create a file called `api_keys.txt` and paste this line inside:
 
 ```
-your_newsapi_key_here
+NEWS_API_KEY=your_api_key_here
 ```
 
----
+(If you're using the hardcoded key, skip this step.)
 
-## 🧐 Script Overview (`batch_ingest.py`)
-
-1. Loads API key from `api_keys.txt`
-2. Calls NewsAPI with selected `category` and `country`
-3. Parses and flattens data (especially `source.name`)
-4. Saves a timestamped `.csv` file in `batch_output/`
-5. Saves data to a local SQLite DB table called `batch_news`
-6. Appends logs/errors to `logfile.log`
-
----
-
-## 🚀 Running the Script Manually
+### 3. Test the Script
 
 ```bash
-/usr/bin/python3 /Applications/XAMPP/xamppfiles/htdocs/news/batch_ingest.py
+python3 batch_ingest.py
 ```
 
-If `pandas` gives a `ModuleNotFoundError`, confirm it's installed under the correct Python version:
-```bash
-/usr/bin/python3 -m pip install pandas --break-system-packages
-```
+Check the output files in `batch_output/`, and make sure the SQLite database was updated too.
 
 ---
 
-## 🗃️ SQLite Setup (Handled Automatically)
+## ⏰ Automate It (Run Every Hour)
 
-If `batch_news` table does not exist, create it using:
-
-```sql
-CREATE TABLE batch_news (
-    source TEXT,
-    author TEXT,
-    title TEXT,
-    description TEXT,
-    url TEXT,
-    publishedAt TEXT,
-    content TEXT,
-    category TEXT
-);
-```
-
-This can be executed manually or included in the script.
-
----
-
-## 🧪 Output Example
-
-**CSV File:**
-```
-batch_output/tech_news_2025-04-11_10-00-00.csv
-```
-
-**Database:**
-`news_articles.db` inside the same folder.
-
----
-
-## 🔄 Setting up Cron Job (Hourly)
-
-### 1. Edit your crontab
+### Open the crontab
 
 ```bash
 crontab -e
 ```
 
-### 2. Add the following line to run every hour
+### Add this line
 
 ```bash
-0 * * * * /usr/bin/python3 /Applications/XAMPP/xamppfiles/htdocs/news/batch_ingest.py >> /Applications/XAMPP/xamppfiles/htdocs/news/logfile.log 2>&1
+0 * * * * /usr/local/bin/python3 /Applications/XAMPP/xamppfiles/htdocs/news/batch_ingest.py >> /Applications/XAMPP/xamppfiles/htdocs/news/logfile.log 2>&1
 ```
 
-> Make sure the path to Python and your script is correct.
-
-### 3. Save & Exit
+✅ Now the script will run **once every hour**, and write logs to `logfile.log`.
 
 ---
 
-## 🔍 Debugging Cron
+## 🛑 Pause the Cron Job
 
-- Check the log:
-```bash
-cat /Applications/XAMPP/xamppfiles/htdocs/news/logfile.log
-```
+If you want to stop it temporarily:
 
-- If the job isn’t running, make sure:
-  - The script is executable
-  - Paths are correct
-  - Dependencies (e.g., pandas) are available under cron's environment
+1. Run `crontab -e`
+2. Add `#` at the beginning of the line to comment it out
 
 ---
 
-## 🚫 Pausing Cron
+## 🐞 Common Issues (Luman Tips)
 
-Option 1: Comment out the line in `crontab -e`
-
-```bash
-# 0 * * * * /usr/bin/python3 /.../batch_ingest.py >> logfile.log 2>&1
-```
-
-Option 2: Backup & remove
+### 🧩 `No module named 'pandas'`
+Run:
 
 ```bash
-crontab -l > backup_cron.txt
-crontab -r  # remove all jobs
-crontab backup_cron.txt  # to restore later
+/usr/local/bin/python3 -m pip install pandas requests --break-system-packages
 ```
+
+### 🧩 `FileNotFoundError: api_keys.txt`
+Create a file named `api_keys.txt` and add:
+
+```
+NEWS_API_KEY=your_actual_key_here
+```
+
+Make sure it’s in the **same folder** as the Python script.
 
 ---
 
-## 🌐 Troubleshooting
+## ✅ Output Summary
 
-- **LibreSSL Warning**  
-  Safe to ignore for basic usage:
-  ```
-  urllib3 v2 only supports OpenSSL 1.1.1+, currently compiled with LibreSSL 2.8.3
-  ```
-
-- **FileNotFoundError: api_keys.txt**  
-  → Ensure `api_keys.txt` exists in the same folder as `batch_ingest.py`.
-
-- **pandas not found**  
-  → Use the same Python version for installing packages and running the script.
+- ✅ CSV in `batch_output/`
+- ✅ JSON archive in `batch_output/output.json`
+- ✅ SQLite database in `tech_news.db`
+- ✅ Logs in `logfile.log`
 
 ---
 
-Let me know if you want a downloadable version or Markdown file!
+## 🤖 Final Words — Luman Speak
 
+Imagine having a robot that:
+- Visits a news site every hour
+- Picks up only new headlines
+- Writes them in Excel, database, and archive file
+- Avoids saving duplicates
+- And never forgets to do this — every single hour!
+
+That’s exactly what this script does for you. Set it once. Forget it. Let the news flow!
+
+---
+
+## 💬 Questions?
+
+Just ping me!
